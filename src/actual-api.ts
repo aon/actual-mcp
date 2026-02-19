@@ -2,14 +2,19 @@ import api from '@actual-app/api';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { BudgetFile, TransactionData, UpdateTransactionData } from './types.js';
+import { TransactionData, UpdateTransactionData } from './types.js';
 import {
   APIAccountEntity,
   APICategoryEntity,
   APICategoryGroupEntity,
+  APIFileEntity,
   APIPayeeEntity,
 } from '@actual-app/api/@types/loot-core/src/server/api-models.js';
-import { RuleEntity, TransactionEntity } from '@actual-app/api/@types/loot-core/src/types/models/index.js';
+import {
+  NewRuleEntity,
+  RuleEntity,
+  TransactionEntity,
+} from '@actual-app/api/@types/loot-core/src/types/models/index.js';
 
 const DEFAULT_DATA_DIR: string = path.resolve(os.homedir() || '.', '.actual');
 
@@ -38,13 +43,19 @@ export async function initActualApi(): Promise<void> {
     if (!fs.existsSync(dataDir)) {
       fs.mkdirSync(dataDir, { recursive: true });
     }
-    await api.init({
-      dataDir,
-      serverURL: process.env.ACTUAL_SERVER_URL,
-      password: process.env.ACTUAL_PASSWORD,
-    });
+    const serverURL = process.env.ACTUAL_SERVER_URL;
+    const password = process.env.ACTUAL_PASSWORD;
+    const sessionToken = process.env.ACTUAL_SESSION_TOKEN;
 
-    const budgets: BudgetFile[] = await api.getBudgets();
+    if (serverURL && password) {
+      await api.init({ dataDir, serverURL, password });
+    } else if (serverURL && sessionToken) {
+      await api.init({ dataDir, serverURL, sessionToken });
+    } else {
+      await api.init({ dataDir });
+    }
+
+    const budgets: APIFileEntity[] = await api.getBudgets();
     if (!budgets || budgets.length === 0) {
       throw new Error('No budgets found. Please create a budget in Actual first.');
     }
@@ -98,7 +109,9 @@ export async function getAccounts(): Promise<APIAccountEntity[]> {
  */
 export async function getCategories(): Promise<APICategoryEntity[]> {
   await initActualApi();
-  return api.getCategories();
+  const results = await api.getCategories();
+  // Reason: api.getCategories() may return category groups mixed in; filter to only categories
+  return results.filter((item): item is APICategoryEntity => 'group_id' in item);
 }
 
 /**
@@ -142,7 +155,7 @@ export async function getRules(): Promise<RuleEntity[]> {
  */
 export async function createPayee(args: Record<string, unknown>): Promise<string> {
   await initActualApi();
-  return api.createPayee(args);
+  return api.createPayee(args as Omit<APIPayeeEntity, 'id'>);
 }
 
 /**
@@ -166,7 +179,7 @@ export async function deletePayee(id: string): Promise<unknown> {
  */
 export async function createRule(args: Record<string, unknown>): Promise<RuleEntity> {
   await initActualApi();
-  return api.createRule(args);
+  return api.createRule(args as Omit<RuleEntity, 'id'>);
 }
 
 /**
@@ -174,7 +187,7 @@ export async function createRule(args: Record<string, unknown>): Promise<RuleEnt
  */
 export async function updateRule(args: Record<string, unknown>): Promise<RuleEntity> {
   await initActualApi();
-  return api.updateRule(args);
+  return api.updateRule(args as RuleEntity);
 }
 
 /**
@@ -190,7 +203,7 @@ export async function deleteRule(id: string): Promise<boolean> {
  */
 export async function createCategory(args: Record<string, unknown>): Promise<string> {
   await initActualApi();
-  return api.createCategory(args);
+  return api.createCategory(args as Omit<APICategoryEntity, 'id'>);
 }
 
 /**
@@ -214,7 +227,7 @@ export async function deleteCategory(id: string): Promise<{ error?: string }> {
  */
 export async function createCategoryGroup(args: Record<string, unknown>): Promise<string> {
   await initActualApi();
-  return api.createCategoryGroup(args);
+  return api.createCategoryGroup(args as Omit<APICategoryGroupEntity, 'id'>);
 }
 
 /**
@@ -246,7 +259,9 @@ export async function createTransaction(accountId: string, data: TransactionData
  */
 export async function updateTransaction(id: string, data: UpdateTransactionData): Promise<unknown> {
   await initActualApi();
-  return api.updateTransaction(id, data);
+  // Reason: The API types require full TransactionEntity for subtransactions,
+  // but the actual runtime API accepts partial subtransaction fields for updates.
+  return api.updateTransaction(id, data as unknown as Partial<TransactionEntity>);
 }
 
 /**
